@@ -33,6 +33,31 @@ from operations.docs_utils import (
 Logger = logging.getLogger(__name__)
 
 
+def get_documents_from_packages(sps_packages: List[str]) -> Dict[str, list]:
+    """
+    Obtém todos os XMLs dos SPS Packages da lista dada. Retorna um dicionário onde a
+    chaves são os paths dos pacotes e a lista de documentos XML são os valores.
+
+    list sps_packages: lista com os paths dos pacotes SPS
+    """
+    packages_xmls = {}
+    for i, sps_package in enumerate(sps_packages, 1):
+        Logger.info(
+            "Reading sps_package: %s [%s/%s]", sps_package, i, len(sps_packages)
+        )
+        with ZipFile(sps_package) as zf:
+            xmls_filenames = [
+                xml_filename
+                for xml_filename in zf.namelist()
+                if os.path.splitext(xml_filename)[-1] == ".xml"
+            ]
+            if xmls_filenames:
+                packages_xmls[sps_package] = xmls_filenames
+            else:
+                Logger.error("No documents in package: %s", sps_package)
+    return packages_xmls
+
+
 def list_documents(sps_package):
     """
     Lista todos os XMLs dos SPS Packages da lista obtida do diretório do XC.
