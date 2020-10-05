@@ -58,26 +58,6 @@ def get_documents_from_packages(sps_packages: List[str]) -> Dict[str, list]:
     return packages_xmls
 
 
-def list_documents(sps_package):
-    """
-    Lista todos os XMLs dos SPS Packages da lista obtida do diretório do XC.
-
-    list sps_packages: lista com os paths dos pacotes SPS no diretório de processamento
-    dict sps_packages_xmls: dict com os paths dos pacotes SPS e os respectivos nomes dos
-        arquivos XML.
-    """
-    Logger.debug("list_documents IN")
-    Logger.info("Reading sps_package: %s" % sps_package)
-    with ZipFile(sps_package) as zf:
-        xmls_filenames = [
-            xml_filename
-            for xml_filename in zf.namelist()
-            if os.path.splitext(xml_filename)[-1] == ".xml"
-        ]
-        Logger.debug("list_documents OUT")
-        return xmls_filenames
-
-
 def delete_documents(
     sps_package: str, xmls_filenames: list
 ) -> Tuple[List[str], List[dict]]:

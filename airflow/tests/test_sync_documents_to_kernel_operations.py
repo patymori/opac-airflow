@@ -15,7 +15,6 @@ from airflow import DAG
 
 from operations.sync_documents_to_kernel_operations import (
     get_documents_from_packages,
-    list_documents,
     delete_documents,
     optimize_sps_pkg_zip_file,
     register_update_documents,
@@ -112,53 +111,6 @@ class TestGetDocumentsFromPackages(TestCase):
         xmls = get_documents_from_packages(list(sps_packages_files.keys()))
 
         self.assertEqual(xmls, {})
-
-
-class TestListDocuments(TestCase):
-    def setUp(self):
-        self.sps_package = "dir/destination/abc_v50.zip"
-
-    @patch("operations.sync_documents_to_kernel_operations.ZipFile")
-    def test_list_document_opens_all_zips(self, MockZipFile):
-        list_documents(self.sps_package)
-        MockZipFile.assert_called_once_with(self.sps_package)
-
-    @patch("operations.sync_documents_to_kernel_operations.ZipFile")
-    def test_list_document_raises_error_if_zipfile_not_found(self, MockZipFile):
-        MockZipFile.side_effect = FileNotFoundError
-        self.assertRaises(FileNotFoundError, list_documents, self.sps_package)
-
-    @patch("operations.sync_documents_to_kernel_operations.ZipFile")
-    def test_list_document_reads_all_xmls_from_zip(self, MockZipFile):
-        sps_package_file_lists = [
-            "0123-4567-abc-50-1-8.xml",
-            "v53n1a01.pdf",
-            "0123-4567-abc-50-1-8-gpn1a01t1.htm",
-            "0123-4567-abc-50-1-8-gpn1a01g1.htm",
-            "0123-4567-abc-50-9-18.xml",
-            "v53n1a02.pdf",
-        ]
-        MockZipFile.return_value.__enter__.return_value.namelist.return_value = (
-            sps_package_file_lists
-        )
-        result = list_documents(self.sps_package)
-        self.assertEqual(
-            result, ["0123-4567-abc-50-1-8.xml", "0123-4567-abc-50-9-18.xml"]
-        )
-
-    @patch("operations.sync_documents_to_kernel_operations.ZipFile")
-    def test_list_document_empty_list_if_no_xml_in_zip(self, MockZipFile):
-        sps_package_file_lists = [
-            "v53n1a01.pdf",
-            "0123-4567-abc-50-1-8-gpn1a01t1.htm",
-            "0123-4567-abc-50-1-8-gpn1a01g1.htm",
-            "v53n1a02.pdf",
-        ]
-        MockZipFile.return_value.__enter__.return_value.namelist.return_value = (
-            sps_package_file_lists
-        )
-        result = list_documents(self.sps_package)
-        self.assertEqual(result, [])
 
 
 class TestDeleteDocuments(TestCase):
