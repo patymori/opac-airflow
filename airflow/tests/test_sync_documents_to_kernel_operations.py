@@ -15,6 +15,7 @@ from airflow import DAG
 
 from operations.sync_documents_to_kernel_operations import (
     get_documents_from_packages,
+    delete_documents_from_packages,
     delete_documents,
     optimize_sps_pkg_zip_file,
     register_update_documents,
@@ -111,6 +112,203 @@ class TestGetDocumentsFromPackages(TestCase):
         xmls = get_documents_from_packages(list(sps_packages_files.keys()))
 
         self.assertEqual(xmls, {})
+
+
+class TestDeleteDocumentsFromPackages(TestCase):
+    def setUp(self):
+        self.proc_dir_path = tempfile.mkdtemp()
+        self.kwargs = {
+            "bundle_xmls": {
+                f"{self.proc_dir_path}/2020-01-01-00-01-09-090901_abc_v1n1.zip": [
+                    "0123-4567-abc-50-1-8.xml",
+                ],
+                f"{self.proc_dir_path}/2020-01-01-00-01-09-090902_abc_v1n1.zip": [
+                    "0123-4567-abc-50-1-8.xml",
+                    "0123-4567-abc-50-1-18.xml",
+                ],
+                f"{self.proc_dir_path}/2020-01-01-00-01-09-090903_abc_v1n1.zip": [
+                    "0123-4567-abc-50-1-8.xml",
+                    "0123-4567-abc-50-1-18.xml",
+                    "0123-4567-abc-50-1-20.xml",
+                ],
+            },
+        }
+        self.are_docs_to_delete = [
+            (True, "FX6F3cbyYmmwvtGmMB7WCgr",),
+            (True, "FX6F3cbyYmmwvtGmMB7WCgr",),
+            (True, "GZ5K2cbyYmmwvtGmMB71243",),
+            (True, "FX6F3cbyYmmwvtGmMB7WCgr",),
+            (True, "GZ5K2cbyYmmwvtGmMB71243",),
+            (True, "KU890cbyYmmwvtGmMB7JUk4",),
+        ]
+        self.expected_pids_calls = [
+            ("FX6F3cbyYmmwvtGmMB7WCgr",),
+            (
+                "FX6F3cbyYmmwvtGmMB7WCgr", "GZ5K2cbyYmmwvtGmMB71243",
+            ),
+            (
+                "FX6F3cbyYmmwvtGmMB7WCgr",
+                "GZ5K2cbyYmmwvtGmMB71243",
+                "KU890cbyYmmwvtGmMB7JUk4",
+            ),
+        ]
+
+    def tearDown(self):
+        shutil.rmtree(self.proc_dir_path)
+
+    @patch("operations.sync_documents_to_kernel_operations.delete_doc_from_kernel")
+    @patch("operations.sync_documents_to_kernel_operations.is_document_to_delete")
+    @patch("operations.sync_documents_to_kernel_operations.ZipFile")
+    def test_calls_document_to_delete_for_each_xml(
+        self, MockZipFile, mk_document_to_delete, mk_delete_doc_from_kernel
+    ):
+        mk_document_to_delete.return_value = (None, None,)
+        delete_documents_from_packages(**self.kwargs)
+        for sps_xml_files in self.kwargs["bundle_xmls"].values():
+            for sps_xml_file in sps_xml_files:
+                with self.subTest(sps_xml_file=sps_xml_file):
+                    mk_document_to_delete.assert_any_call(
+                        MockZipFile.return_value.__enter__.return_value,
+                        sps_xml_file
+                    )
+
+    @patch("operations.sync_documents_to_kernel_operations.delete_doc_from_kernel")
+    @patch("operations.sync_documents_to_kernel_operations.Logger")
+    @patch("operations.sync_documents_to_kernel_operations.is_document_to_delete")
+    @patch("operations.sync_documents_to_kernel_operations.ZipFile")
+    def test_logs_error_if_document_to_delete_error(
+        self, MockZipFile, mk_document_to_delete, MockLogger, mk_delete_doc_from_kernel
+    ):
+        mk_document_to_delete.side_effect = DocumentToDeleteException("XML Error")
+        delete_documents_from_packages(**self.kwargs)
+        mk_delete_doc_from_kernel.assert_not_called()
+        for sps_xml_files in self.kwargs["bundle_xmls"].values():
+            for sps_xml_file in sps_xml_files:
+                with self.subTest(sps_xml_file=sps_xml_file):
+                    MockLogger.error.assert_any_call(
+                        'Error reading document "%s": %s', sps_xml_file, "XML Error"
+                    )
+
+    @patch("operations.sync_documents_to_kernel_operations.delete_doc_from_kernel")
+    @patch("operations.sync_documents_to_kernel_operations.Logger")
+    @patch("operations.sync_documents_to_kernel_operations.is_document_to_delete")
+    @patch("operations.sync_documents_to_kernel_operations.ZipFile")
+    def test_calls_delete_doc_from_kernel(
+        self, MockZipFile, mk_document_to_delete, MockLogger, mk_delete_doc_from_kernel
+    ):
+        mk_document_to_delete.side_effect = self.are_docs_to_delete
+        delete_documents_from_packages(**self.kwargs)
+        self.assertEqual(
+            mk_delete_doc_from_kernel.mock_calls,
+            [
+                call(doc_to_delete)
+                for __, doc_to_delete in self.are_docs_to_delete
+            ]
+        )
+
+    @patch("operations.sync_documents_to_kernel_operations.delete_doc_from_kernel")
+    @patch("operations.sync_documents_to_kernel_operations.Logger")
+    @patch("operations.sync_documents_to_kernel_operations.is_document_to_delete")
+    @patch("operations.sync_documents_to_kernel_operations.ZipFile")
+    def test_logs_error_if_kernel_connect_error(
+        self, MockZipFile, mk_document_to_delete, MockLogger, mk_delete_doc_from_kernel
+    ):
+        mk_document_to_delete.side_effect = self.are_docs_to_delete
+        mk_delete_doc_from_kernel.side_effect = DeleteDocFromKernelException(
+            "404 Client Error: Not Found"
+        )
+        delete_documents_from_packages(**self.kwargs)
+        for sps_xml_files, docs_to_delete in zip(
+                self.kwargs["bundle_xmls"].values(), self.expected_pids_calls
+            ):
+            for sps_xml_file, doc_to_delete in zip(sps_xml_files, docs_to_delete):
+                with self.subTest(sps_xml_file=sps_xml_file, doc_to_delete=doc_to_delete):
+                    MockLogger.info.assert_any_call(
+                        'Could not delete "%s" (scielo_id: "%s") from kernel: %s',
+                        sps_xml_file,
+                        doc_to_delete,
+                        "404 Client Error: Not Found"
+                    )
+
+    @patch("operations.sync_documents_to_kernel_operations.delete_doc_from_kernel")
+    @patch("operations.sync_documents_to_kernel_operations.Logger")
+    @patch("operations.sync_documents_to_kernel_operations.is_document_to_delete")
+    @patch("operations.sync_documents_to_kernel_operations.ZipFile")
+    def test_logs_document_deletion_success(
+        self, MockZipFile, mk_document_to_delete, MockLogger, mk_delete_doc_from_kernel
+    ):
+        mk_document_to_delete.side_effect = self.are_docs_to_delete
+        delete_documents_from_packages(**self.kwargs)
+        for sps_xml_files, docs_to_delete in zip(
+                self.kwargs["bundle_xmls"].values(), self.expected_pids_calls
+            ):
+            for sps_xml_file, doc_to_delete in zip(sps_xml_files, docs_to_delete):
+                with self.subTest(sps_xml_file=sps_xml_file, doc_to_delete=doc_to_delete):
+                    MockLogger.info.assert_any_call(
+                        'Document "%s" (scielo_id: "%s") deleted from kernel',
+                        sps_xml_file,
+                        doc_to_delete
+                    )
+
+    @patch("operations.sync_documents_to_kernel_operations.delete_doc_from_kernel")
+    @patch("operations.sync_documents_to_kernel_operations.Logger")
+    @patch("operations.sync_documents_to_kernel_operations.is_document_to_delete")
+    @patch("operations.sync_documents_to_kernel_operations.ZipFile")
+    def test_logs_error_if_no_scielo_doc_id(
+        self, MockZipFile, mk_document_to_delete, MockLogger, mk_delete_doc_from_kernel
+    ):
+        mk_document_to_delete.side_effect = self.are_docs_to_delete[:-1] + [(True, None,)]
+        result = delete_documents_from_packages(**self.kwargs)
+        MockLogger.error.assert_any_call(
+            'Document "%s" will not be deleted because SciELO PID is None',
+            "0123-4567-abc-50-1-20.xml"
+        )
+
+    @patch("operations.sync_documents_to_kernel_operations.delete_doc_from_kernel")
+    @patch("operations.sync_documents_to_kernel_operations.Logger")
+    @patch("operations.sync_documents_to_kernel_operations.is_document_to_delete")
+    @patch("operations.sync_documents_to_kernel_operations.ZipFile")
+    def test_returns_xmls_to_preserve(
+        self, MockZipFile, mk_document_to_delete, MockLogger, mk_delete_doc_from_kernel
+    ):
+        mk_document_to_delete.side_effect = [
+            (False, "FX6F3cbyYmmwvtGmMB7WCgr",),
+            (True, "FX6F3cbyYmmwvtGmMB7WCgr",),
+            (False, "GZ5K2cbyYmmwvtGmMB71243",),
+            (False, "FX6F3cbyYmmwvtGmMB7WCgr",),
+            (True, None,),
+            (False, "KU890cbyYmmwvtGmMB7JUk4",),
+        ]
+        result, executions = delete_documents_from_packages(**self.kwargs)
+        expected_to_preserve = {
+            f"{self.proc_dir_path}/2020-01-01-00-01-09-090901_abc_v1n1.zip": [
+                "0123-4567-abc-50-1-8.xml",
+            ],
+            f"{self.proc_dir_path}/2020-01-01-00-01-09-090902_abc_v1n1.zip": [
+                "0123-4567-abc-50-1-18.xml",
+            ],
+            f"{self.proc_dir_path}/2020-01-01-00-01-09-090903_abc_v1n1.zip": [
+                "0123-4567-abc-50-1-8.xml",
+                "0123-4567-abc-50-1-20.xml",
+            ]
+        }
+
+        expected_executions = [
+            {
+                "package_name": f"{self.proc_dir_path}/2020-01-01-00-01-09-090902_abc_v1n1.zip",
+                "file_name": "0123-4567-abc-50-1-8.xml",
+                "deletion": True,
+                "pid": "FX6F3cbyYmmwvtGmMB7WCgr",
+            },
+            {
+                "package_name": f"{self.proc_dir_path}/2020-01-01-00-01-09-090903_abc_v1n1.zip",
+                "file_name": "0123-4567-abc-50-1-18.xml",
+                "deletion": True,
+                "failed": True, "error": "SciELO PID V3 is None",
+            },
+        ]
+        self.assertEqual(result, expected_to_preserve)
+        self.assertEqual(executions, expected_executions)
 
 
 class TestDeleteDocuments(TestCase):
